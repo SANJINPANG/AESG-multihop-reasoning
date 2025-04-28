@@ -154,7 +154,6 @@ class Iter_trainer(object):
         out_line = list()
         device = "cuda" if torch.cuda.is_available() else "cpu"
         train_set = TestDataset(data_path=self.dataset+"/", vocab_file=self.dataset+"/vocab.txt", device=device, src_file="train_triples_rev.txt")
-        #源序列文件 示例：5594	R14	5698
         train_loader = DataLoader(train_set, batch_size=self.batch_size, collate_fn=train_set.collate_fn, shuffle=True)
         beam_size = self.beam_size
         model.eval()
@@ -171,41 +170,32 @@ class Iter_trainer(object):
             index = model.dictionary.indices[name]
             nol_dict[name] = index
             rev_dict[index] = name
-            #反向字典 将索引反向递归成实体
 
         with tqdm(train_loader, desc="iterating") as pbar:
             for samples in pbar:
-                #遍历每一个批次
                 batch_size = samples["source"].size(0)
                 candidate_path = [list() for i in range(batch_size)]
                 candidate_score = [list() for i in range(batch_size)]
-                #后续路径和后续路径分数
                 source = samples["source"].unsqueeze(dim=1).repeat(1, beam_size, 1).to(device)
-                #源序列初始化
                 prefix = torch.zeros([batch_size, beam_size, max_len], dtype=torch.long).to(device)
                 lprob = torch.zeros([batch_size, beam_size]).to(device)
                 clen = torch.zeros([batch_size, beam_size], dtype=torch.long).to(device)
 
-                #初始化前缀张量和累计张量概率
                 # first token: choose beam_size from only vocab_size, initiate prefix
                 tmp_source = samples["source"]
                 tmp_prefix = torch.zeros([batch_size, 1], dtype=torch.long).to(device)
-                tmp_prefix[:, 0].fill_(model.dictionary.bos())#每个批次的第一个token由bos填充
-                #论文在这里预测的目标路径是BOS r1 t1 r2 t组成的
-                #这部分由序列模型的logit代码对实体进行预测
+                tmp_prefix[:, 0].fill_(model.dictionary.bos())
 
-                #这里由模型的logit函数对词汇表中的每一个词输出可能性概率由argsort函数抽取前beam_size个作为下一步的可能实体
                 logits = model.logits(tmp_source, tmp_prefix).squeeze()
                 logits = F.log_softmax(logits, dim=-1) 
                 argsort = torch.argsort(logits, dim=-1, descending=True)[:, :beam_size]
-                #这里的输入为（3，16）
+
 
 
                 prefix[:, :, 1] = argsort[:, :]
                 lprob += torch.gather(input=logits, dim=-1, index=argsort)
                 clen += 1
 
-                #原始训练代码
                 for l in range(2, max_len):
                     tmp_prefix = prefix.unsqueeze(dim=2).repeat(1, 1, beam_size, 1)
                     tmp_lprob = lprob.unsqueeze(dim=-1).repeat(1, 1, beam_size)      
